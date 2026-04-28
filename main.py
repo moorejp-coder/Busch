@@ -99,7 +99,7 @@ async def chat(request: Request):
 
         # Create model with system prompt
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",  # Free tier, fast, large context window
+            model_name="gemini-2.0-flash",  # Free tier, fast, large context window
             system_instruction=SYSTEM_PROMPT
         )
 
