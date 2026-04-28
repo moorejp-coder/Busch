@@ -84,7 +84,7 @@ async def chat(request: Request):
         client = Groq(api_key=GROQ_API_KEY)
 
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",  # Free, fast, high quality
+            model="llama3-8b-8192",
             max_tokens=2048,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
