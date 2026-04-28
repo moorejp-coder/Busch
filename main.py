@@ -2,10 +2,10 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-import anthropic
+from groq import Groq
 import os
 
-# Use absolute paths so Render can always find files
+# Absolute paths so Render can always find files
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 PROMPT_FILE = os.path.join(BASE_DIR, "system_prompt.txt")
@@ -19,11 +19,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# Load API key from environment variable
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+# Load API key from Render environment variable
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
 # Load system prompt once at startup
 def get_system_prompt():
@@ -45,17 +44,17 @@ async def root():
 async def health():
     return {
         "status": "ok",
-        "key_configured": bool(ANTHROPIC_API_KEY),
+        "key_configured": bool(GROQ_API_KEY),
         "prompt_loaded": len(SYSTEM_PROMPT) > 100,
         "static_dir_exists": os.path.exists(STATIC_DIR),
     }
 
 @app.post("/chat")
 async def chat(request: Request):
-    if not ANTHROPIC_API_KEY:
+    if not GROQ_API_KEY:
         raise HTTPException(
             status_code=500,
-            detail="API key not configured. Please set ANTHROPIC_API_KEY in your Render environment variables."
+            detail="API key not configured. Please set GROQ_API_KEY in your Render environment variables."
         )
 
     try:
@@ -65,26 +64,41 @@ async def chat(request: Request):
         if not messages:
             raise HTTPException(status_code=400, detail="No messages provided.")
 
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        # Groq only supports text — strip any image/document content blocks
+        cleaned_messages = []
+        for msg in messages:
+            if isinstance(msg["content"], str):
+                cleaned_messages.append(msg)
+            elif isinstance(msg["content"], list):
+                # Extract just the text parts
+                text_parts = [
+                    block["text"] for block in msg["content"]
+                    if block.get("type") == "text"
+                ]
+                if text_parts:
+                    cleaned_messages.append({
+                        "role": msg["role"],
+                        "content": "\n".join(text_parts)
+                    })
 
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+        client = Groq(api_key=GROQ_API_KEY)
+
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",  # Free, fast, high quality
             max_tokens=2048,
-            system=SYSTEM_PROMPT,
-            messages=messages
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                *cleaned_messages
+            ]
         )
 
         return {
-            "content": response.content[0].text,
+            "content": response.choices[0].message.content,
             "usage": {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens
+                "input_tokens": response.usage.prompt_tokens,
+                "output_tokens": response.usage.completion_tokens
             }
         }
 
-    except anthropic.AuthenticationError:
-        raise HTTPException(status_code=401, detail="Invalid API key. Please check your ANTHROPIC_API_KEY in Render.")
-    except anthropic.RateLimitError:
-        raise HTTPException(status_code=429, detail="Rate limit reached. Please try again in a moment.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
